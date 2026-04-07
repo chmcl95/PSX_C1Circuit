@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "C1CircuitTool": {
+      "commandName": "Project",
+      "commandLineArgs": "unpack -i \"D:\\Hack\\Invex\\C1_Circuit\\format\\NA8C.S\" -o \"D:\\Hack\\Invex\\C1_Circuit\\format\\compress\\RCARDT\\NA8S\""
+    }
+  }
+}

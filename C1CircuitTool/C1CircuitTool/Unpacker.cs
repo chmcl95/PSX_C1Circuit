@@ -22,7 +22,7 @@ namespace C1CircuitTool
 
         public void Unpack()
         {
-            Console.WriteLine("Startin to unpack...");
+            Console.WriteLine("Starting Unpack...");
 
             Directory.CreateDirectory(_destPath);
 
@@ -49,11 +49,13 @@ namespace C1CircuitTool
                     using (MemoryStream sourceStream = new MemoryStream(bytes))
                     using (FileStream destStream = new FileStream(@$"{_destPath}\{i:D8}.BIN", FileMode.Create, FileAccess.Write))
                     {
-                        LzProperties lzProperties = new LzProperties(0x1000, 0xF + 3, 3, 0xFEE);
-                        LZSS.DecompressHeaderless(sourceStream, destStream, (uint)decompressSize, lzProperties);
+                        LZSS.DecompressHeaderless(sourceStream, destStream, (uint)decompressSize, LZSS.Lzss0Properties);
+                        
                     }
                 }
             }
+
+            Console.WriteLine("Done");
 
         }
     }

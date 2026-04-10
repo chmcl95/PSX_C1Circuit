@@ -49,8 +49,8 @@ namespace C1CircuitTool
                 outputPath = $"{Path.GetDirectoryName(options.InputPath)}\\packed";
             }
 
-            //Packer packer = new Packer(options.InputPath, outputPath);
-            //packer.Pack();
+            Packer packer = new Packer(options.InputPath, outputPath);
+            packer.Pack();
 
             return;
         }

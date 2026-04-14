@@ -26,7 +26,7 @@ namespace C1CircuitTool
             string outputPath = options.OutputPath;
             if (string.IsNullOrEmpty(options.OutputPath))
             {
-                outputPath = $"{Path.GetDirectoryName(options.InputPath)}\\extracted";
+                outputPath = $"{Path.GetDirectoryName(options.InputPath)}\\extracted\\{Path.GetFileNameWithoutExtension(options.InputPath)}";
             }
 
             Unpacker unpacker = new Unpacker(options.InputPath, outputPath);

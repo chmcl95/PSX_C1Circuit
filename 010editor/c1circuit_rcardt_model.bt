@@ -1,0 +1,79 @@
+//------------------------------------------------
+//--- 010 Editor v16.0.3 Binary Template
+//
+//      File: 
+//   Authors: 
+//   Version: 
+//   Purpose: 
+//  Category: 
+// File Mask: 
+//  ID Bytes: 
+//   History: 
+//------------------------------------------------
+
+typedef struct {
+    short x;
+    short y;
+    short z;
+    short padding;
+} Vertex;
+
+typedef struct {
+    byte u;
+    byte v;
+} UV;
+
+typedef struct {
+    byte raw_texture : 1;
+    byte semi_transparent : 1;
+    byte textured : 1;
+    byte _quad : 1;
+    byte gouraud : 1;
+    byte render_type : 3<comment="1:polygon, 2:line, 3:rectangle">;
+} PSX_GPU_COMMAND;
+
+typedef struct {
+    ushort x_coordinate : 6<comment="needs times 16 for actual value.">;
+    ushort y_coordinate : 9<comment="immidiate value">;
+    ushort pad : 0;
+} PSX_GPU_CLUT;
+
+typedef struct {
+    ushort texpage_x : 4<comment="needs times 64 for actual value.">;
+    ushort texpage_y : 1<comment="needs times 256 for actual value.">;
+    ushort semi_transparency : 2<comment="0:B/2+F/2, 1:B+F, 2:B-F, 3:B+F/4">;
+    ushort texture_page_colors : 2<comment="0:4bit, 1:8bit, 2:15bit, 3:Reserved">;
+    ushort unk_bit9: 2;
+    ushort texture_disable : 1;
+    ushort unk_bit12 : 4;
+} PSX_GPU_Texpage;
+
+typedef struct {
+    byte color[3];
+    PSX_GPU_COMMAND command;
+    UV uv0;
+    PSX_GPU_CLUT clut;
+    UV uv1;
+    PSX_GPU_Texpage texpage;
+    UV uv2;
+    UV uv3;
+    Vertex position[4];
+    short unkwon0x2C[6];
+} Surface;
+
+typedef struct {
+    int surfaceLength;
+    int position[3];
+    int rotation[3];
+    uint ptr_mdl<comment="in game.">;
+} Node;
+
+typedef struct(int surfaceLength) {
+    Surface surfaces[surfaceLength];
+}Object;
+
+Node nodes[4];
+local int i = 0;
+for (i = 0; i < 4; i++) {
+    Object object(nodes[i].surfaceLength);
+}

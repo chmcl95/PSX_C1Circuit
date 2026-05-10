@@ -50,7 +50,6 @@ namespace C1CircuitTool
                     using (FileStream destStream = new FileStream(@$"{_destPath}\{i:D8}.BIN", FileMode.Create, FileAccess.Write))
                     {
                         LZSS.DecompressHeaderless(sourceStream, destStream, (uint)decompressSize, LZSS.Lzss0Properties);
-                        
                     }
                 }
             }

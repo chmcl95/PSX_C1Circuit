@@ -55,8 +55,7 @@ namespace C1CircuitTool
                         //// padding
                         while ((arcFileStream.Position % 4) != 0)
                         {
-                            bytes[0] = 0x00;
-                            arcFileStream.Write(bytes, 0x00, bytes.Length);
+                            arcFileStream.WriteByte(0x00);
                         }
                         long fileEndPos = arcFileStream.Position;
                         compressedSizes[i] = (UInt32)(fileEndPos - fileStartPos);

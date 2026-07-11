@@ -1,0 +1,26 @@
+# Invex C1 Circuit PSX
+# script for QuickBMS http://quickbms.aluigi.org
+# Unpack ".S" file
+# by chmcl95
+
+comType LZSS0
+get LENGTH long
+for i = 0 < LENGTH
+    get COMPRESSED_SIZE long
+    putArray COMPRESSED_SIZEs i COMPRESSED_SIZE
+next i
+For i = 0 < length
+    savePos START_OFFSET
+    get DECOMPRESS_SIZE long
+    savePos OFFSET
+    getArray RAW_COMPRESSED_SIZE COMPRESSED_SIZEs i
+    xmath COMPRESSED_SIZE "RAW_COMPRESSED_SIZE - 4"
+    get NAME basename
+    string INDEX p "%08d" i
+    string NAME + "/"
+    string NAME + INDEX
+    string NAME + ".BIN"
+    clog NAME OFFSET COMPRESSED_SIZE DECOMPRESS_SIZE
+    xmath NEXT_OFFSET "START_OFFSET + RAW_COMPRESSED_SIZE"
+    goto NEXT_OFFSET
+next i

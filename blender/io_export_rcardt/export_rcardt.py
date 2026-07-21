@@ -252,7 +252,7 @@ class EXPORT_OT_RCARDT(bpy.types.Operator, ExportHelper):
                     "triangle, flipping which side is considered the "
                     "front face in-game. Enable this if all faces appear "
                     "backwards/culled after exporting",
-        default=False,
+        default=True,
     )
     flip_v: BoolProperty(
         name="Flip UV V",

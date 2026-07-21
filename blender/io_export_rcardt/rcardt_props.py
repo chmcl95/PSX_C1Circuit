@@ -142,7 +142,7 @@ class RCARDT_MaterialSetting(bpy.types.PropertyGroup):
         name="Unknown Tail (0x2C)",
         description="Raw passthrough for the 6 unknown shorts at the end "
                     "of every Surface",
-        default=(0, 0, 0, 0, 0, 0), size=6,
+        default=(0, 0, 0, 0, 0, 0), size=6, min=0, max=65535,
     )
 
     # UI collapsible section flags

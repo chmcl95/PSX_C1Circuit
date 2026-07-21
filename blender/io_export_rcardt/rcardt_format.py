@@ -55,6 +55,8 @@ def clamp(value, lo, hi):
 def clamp_short(value):
     return clamp(value, -32768, 32767)
 
+def clamp_ushort(value):
+    return clamp(value, 0, 65535)
 
 def clamp_byte(value):
     return clamp(value, 0, 255)
@@ -206,7 +208,7 @@ class RcardtSurface:
             clamp_byte(self.uv3[0]), clamp_byte(self.uv3[1]),
         )
         body = b''.join(v.pack() for v in self.positions)
-        tail = struct.pack('<6h', *[clamp_short(v) for v in self.unknown_tail])
+        tail = struct.pack('<6H', *[clamp_ushort(v) for v in self.unknown_tail])
         data = head + body + tail
         assert len(data) == SURFACE_STRUCT_SIZE, \
             f"Surface size mismatch: {len(data)} != {SURFACE_STRUCT_SIZE}"

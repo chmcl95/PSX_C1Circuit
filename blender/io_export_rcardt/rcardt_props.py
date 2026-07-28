@@ -1,3 +1,4 @@
+import bmesh
 import bpy
 
 from . import rcardt_presets
@@ -42,6 +43,42 @@ def clut_preset_items(self, context):
     ))
     _clut_enum_items = items
     return _clut_enum_items
+
+
+class RCARDT_OT_SelectNonQuads(bpy.types.Operator):
+    """Enter edit mode and select every face that is not a quad"""
+
+    bl_idname = "rcardt.select_non_quads"
+    bl_label = "Select Non-Quad Faces"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and context.object.type == 'MESH'
+
+    def execute(self, context):
+        obj = context.object
+        if obj.mode != 'EDIT':
+            bpy.ops.object.mode_set(mode='EDIT')
+        context.tool_settings.mesh_select_mode = (False, False, True)
+
+        bm = bmesh.from_edit_mesh(obj.data)
+        count = 0
+        for face in bm.faces:
+            bad = len(face.verts) != 4
+            face.select_set(bad)
+            count += bad
+        # Faces were set directly, so push the state down to edges/verts.
+        bm.select_flush_mode()
+        bmesh.update_edit_mesh(obj.data)
+
+        if count:
+            self.report({'WARNING'},
+                        f"'{obj.name}': {count} non-quad face(s) selected. "
+                        f"The game only draws quads correctly")
+        else:
+            self.report({'INFO'}, f"'{obj.name}': every face is a quad")
+        return {'FINISHED'}
 
 
 class RCARDT_OT_ReloadPresets(bpy.types.Operator):
@@ -246,6 +283,7 @@ class RCARDT_MaterialSetting(bpy.types.PropertyGroup):
 
 
 classes = (
+    RCARDT_OT_SelectNonQuads,
     RCARDT_OT_ReloadPresets,
     RCARDT_ObjectSetting,
     RCARDT_MaterialSetting,

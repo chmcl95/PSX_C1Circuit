@@ -1,10 +1,30 @@
 import bpy
 
+import bmesh
+
 from . import rcardt_presets
-from .rcardt_props import RCARDT_OT_ReloadPresets, preset_file_path
+from .rcardt_props import (RCARDT_OT_ReloadPresets, RCARDT_OT_SelectNonQuads,
+                           preset_file_path)
 
 MSG_HEX_2 = '{0}: 0x{1:02X}'
 MSG_HEX_4 = '{0}: 0x{1:04X}'
+
+
+def _editable_non_quad_counts(obj):
+    """(triangles, ngons) in the mesh as the user sees it right now.
+
+    Deliberately reads the editable mesh rather than the evaluated one: this
+    runs on every panel redraw, and evaluating the depsgraph there would mean
+    building a temporary mesh each time. The export check is the authority
+    and does look at the evaluated result.
+    """
+    if obj.mode == 'EDIT':
+        bm = bmesh.from_edit_mesh(obj.data)
+        sizes = [len(f.verts) for f in bm.faces]
+    else:
+        sizes = [len(p.vertices) for p in obj.data.polygons]
+    return (sum(1 for n in sizes if n == 3),
+            sum(1 for n in sizes if n > 4))
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +93,22 @@ class OBJECT_PT_RCARDT_Object_Editor(bpy.types.Panel):
         if settings.ptr_mdl:
             col.label(text=f"ptr_mdl (imported): 0x{settings.ptr_mdl & 0xFFFFFFFF:08X}",
                       icon='INFO')
+
+        # The game issues a quad draw command for every surface, so anything
+        # else renders wrong. Surfaced here rather than only at export time.
+        box = layout.box()
+        triangles, ngons = _editable_non_quad_counts(obj)
+        if triangles or ngons:
+            parts = []
+            if triangles:
+                parts.append(f"{triangles} triangle(s)")
+            if ngons:
+                parts.append(f"{ngons} n-gon(s)")
+            box.label(text=", ".join(parts) + " - export will abort",
+                      icon='ERROR')
+        else:
+            box.label(text="All faces are quads", icon='CHECKMARK')
+        box.operator(RCARDT_OT_SelectNonQuads.bl_idname, icon='FACESEL')
 
 
 # ---------------------------------------------------------------------------

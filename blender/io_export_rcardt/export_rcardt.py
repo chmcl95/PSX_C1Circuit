@@ -4,7 +4,7 @@ import os
 import bmesh
 import bpy
 import mathutils
-from bpy.props import BoolProperty, FloatProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
 from .rcardt_format import RcardtModel, RcardtSurface, RcardtVertex, NODE_COUNT
@@ -15,9 +15,15 @@ MSG_WARN_NODE_EMPTY = "Node {0}: no object assigned, writing an empty node " \
                       "(surfaceLength = 0)."
 MSG_WARN_NODE_MULTI = "Node {0}: multiple objects assigned ({1}). " \
                       "Their geometry will be merged into a single node."
-MSG_WARN_NGON = "Object '{0}': {1} n-gon face(s) triangulated automatically."
 MSG_INFO_DONE = "RCARDT export finished: {0} node(s), {1} surface(s) total."
 MSG_WARN_TRAILING = "Scene's stored trailing bytes are not valid hex; skipped."
+MSG_ERR_NON_QUAD = (
+    "The game only draws quads correctly, and these faces are not quads: {0}. "
+    "Use 'Select Non-Quad Faces' in the RCARDT Node Editor to find them, or "
+    "set Non-Quad Faces to 'Export Anyway' to write the file regardless.")
+MSG_WARN_NON_QUAD = (
+    "Exporting non-quad faces on request: {0}. N-gons were triangulated. "
+    "Expect these faces to render incorrectly in game.")
 
 # C1CircuitTool packs archive entries in file name order, and the game reads
 # entry 0 as the model, so this is the name the export has to carry.
@@ -27,6 +33,10 @@ DEFAULT_FILENAME = "00000000.BIN"
 # node header positions. Confirmed empirically to make the in-game
 # orientation match the Blender scene.
 AXIS_ROTATION_MATRIX = mathutils.Matrix.Rotation(math.radians(90), 4, (1.0, 0.0, 0.0))
+
+
+class RcardtExportError(Exception):
+    """The scene cannot produce a valid model file."""
 
 
 def _angle_to_psx_units(radians_value):
@@ -92,9 +102,12 @@ def _uv_to_byte(uv, flip_v):
     return (max(0, min(255, int(u))), max(0, min(255, int(v))))
 
 
-def _export_object_surfaces(obj, options, warnings):
-    """Triangulate/quadrangulate obj's mesh and return a list of
-    RcardtSurface built from its local-space geometry."""
+def _evaluated_bmesh(obj):
+    """obj's mesh with modifiers applied, as a bmesh the caller must free.
+
+    Returns (bmesh, evaluated_object) so the caller can release the temporary
+    mesh with to_mesh_clear().
+    """
     depsgraph = bpy.context.evaluated_depsgraph_get()
     obj_eval = obj.evaluated_get(depsgraph)
     mesh = obj_eval.to_mesh()
@@ -102,13 +115,65 @@ def _export_object_surfaces(obj, options, warnings):
     bm = bmesh.new()
     bm.from_mesh(mesh)
     bm.faces.ensure_lookup_table()
+    return bm, obj_eval
 
-    ngon_count = sum(1 for f in bm.faces if len(f.verts) > 4)
-    if ngon_count > 0 and options['auto_triangulate']:
+
+def count_non_quad_faces(obj):
+    """(triangles, ngons) in obj's evaluated mesh.
+
+    Counted after modifiers, because that is what actually gets exported.
+    """
+    bm, obj_eval = _evaluated_bmesh(obj)
+    triangles = sum(1 for f in bm.faces if len(f.verts) == 3)
+    ngons = sum(1 for f in bm.faces if len(f.verts) > 4)
+    bm.free()
+    obj_eval.to_mesh_clear()
+    return triangles, ngons
+
+
+def _check_quads(buckets, options, warnings):
+    """Refuse to export geometry the game cannot draw.
+
+    Every one of the 3341 surfaces across the 15 retail models is a quad.
+    A triangle still fits the 60 byte packet (is_quad = 0) but the game
+    issues a quad draw command regardless and the result is corrupt, and an
+    n-gon does not fit at all. Both used to leave silently: n-gons were
+    auto-triangulated into the first problem, and anything still larger was
+    dropped without a word.
+    """
+    offenders = []
+    for objs in buckets.values():
+        for obj in objs:
+            triangles, ngons = count_non_quad_faces(obj)
+            if triangles or ngons:
+                offenders.append((obj.name, triangles, ngons))
+
+    if not offenders:
+        return
+
+    detail = "; ".join(
+        f"'{name}': " + ", ".join(
+            part for part in (
+                f"{triangles} triangle(s)" if triangles else "",
+                f"{ngons} n-gon(s)" if ngons else "",
+            ) if part)
+        for name, triangles, ngons in offenders)
+
+    if options['non_quad_faces'] == 'EXPORT':
+        warnings.append(MSG_WARN_NON_QUAD.format(detail))
+        return
+    raise RcardtExportError(MSG_ERR_NON_QUAD.format(detail))
+
+
+def _export_object_surfaces(obj, options, warnings):
+    """Return the RcardtSurface list for obj's local-space geometry."""
+    bm, obj_eval = _evaluated_bmesh(obj)
+
+    if options['non_quad_faces'] == 'EXPORT':
         ngon_faces = [f for f in bm.faces if len(f.verts) > 4]
-        bmesh.ops.triangulate(bm, faces=ngon_faces, quad_method='BEAUTY',
-                              ngon_method='BEAUTY')
-        warnings.append(MSG_WARN_NGON.format(obj.name, ngon_count))
+        if ngon_faces:
+            bmesh.ops.triangulate(bm, faces=ngon_faces, quad_method='BEAUTY',
+                                  ngon_method='BEAUTY')
 
     uv_layer = bm.loops.layers.uv.active
 
@@ -123,7 +188,7 @@ def _export_object_surfaces(obj, options, warnings):
     for face in bm.faces:
         loops = list(face.loops)
         if len(loops) not in (3, 4):
-            continue  # already triangulated above; skip stray n-gons
+            continue  # n-gons; _check_quads has already reported them
 
         mat_settings = _material_settings_for(obj, face.material_index)
         surf = _build_surface(None, mat_settings, uv_layer, options)
@@ -212,6 +277,10 @@ def build_model(context, options):
     if all(len(v) == 0 for v in buckets.values()):
         warnings.append(MSG_WARN_NO_NODES)
 
+    # Checked up front so a bad scene reports every offending object at once
+    # and nothing gets written.
+    _check_quads(buckets, options, warnings)
+
     model = RcardtModel()
     for i in range(NODE_COUNT):
         model.nodes[i] = _build_node(i, buckets[i], options, warnings)
@@ -282,12 +351,20 @@ class EXPORT_OT_RCARDT(bpy.types.Operator, ExportHelper):
                     "convention)",
         default=True,
     )
-    auto_triangulate: BoolProperty(
-        name="Auto-Triangulate N-gons",
-        description="Automatically triangulate faces with more than 4 "
-                    "vertices (the format only supports triangles and "
-                    "quads)",
-        default=True,
+    non_quad_faces: EnumProperty(
+        name="Non-Quad Faces",
+        description="What to do when the scene holds faces that are not "
+                    "quads. The game issues a quad draw command for every "
+                    "surface, so triangles render incorrectly and n-gons do "
+                    "not fit the format at all",
+        items=[
+            ('ERROR', "Abort Export",
+             "Stop and report which objects hold triangles or n-gons"),
+            ('EXPORT', "Export Anyway",
+             "Write triangles as-is and triangulate n-gons. For experiments; "
+             "expect these faces to render incorrectly in game"),
+        ],
+        default='ERROR',
     )
 
     def invoke(self, context, event):
@@ -306,7 +383,8 @@ class EXPORT_OT_RCARDT(bpy.types.Operator, ExportHelper):
         layout.prop(self, "reorder_quad")
         layout.prop(self, "flip_winding")
         layout.prop(self, "flip_v")
-        layout.prop(self, "auto_triangulate")
+        layout.separator()
+        layout.prop(self, "non_quad_faces")
 
     def execute(self, context):
         options = {
@@ -315,11 +393,14 @@ class EXPORT_OT_RCARDT(bpy.types.Operator, ExportHelper):
             'reorder_quad': self.reorder_quad,
             'flip_winding': self.flip_winding,
             'flip_v': self.flip_v,
-            'auto_triangulate': self.auto_triangulate,
+            'non_quad_faces': self.non_quad_faces,
         }
         try:
             model, warnings = build_model(context, options)
             model.write(self.filepath)
+        except RcardtExportError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
         except Exception as e:
             self.report({'ERROR'}, f"Unexpected error: {e}")
             return {'CANCELLED'}

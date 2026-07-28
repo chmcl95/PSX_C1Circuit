@@ -49,6 +49,12 @@ typedef struct {
 } PSX_GPU_Texpage;
 
 typedef struct {
+    int x;
+    int y;
+    int z;
+} Normal;
+
+typedef struct {
     byte color[3];
     PSX_GPU_COMMAND command;
     UV uv0;
@@ -58,7 +64,7 @@ typedef struct {
     UV uv2;
     UV uv3;
     Vertex position[4];
-    short unkwon0x2C[6];
+    Normal normal<comment="cross(position[1]-position[0], position[2]-position[0]), unnormalized">;
 } Surface;
 
 typedef struct {

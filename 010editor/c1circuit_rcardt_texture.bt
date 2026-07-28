@@ -1,0 +1,53 @@
+//------------------------------------------------
+//--- 010 Editor v16.0.3 Binary Template
+//
+//      File: c1circuit_rcardt_texture.bt
+//   Purpose: RCARDT texture file (00000001.BIN) of C1 Circuit (SLPS-00279)
+//  Category: Texture
+// File Mask: 00000001.BIN
+//------------------------------------------------
+//
+// A flat run of VRAM upload blocks, alternating palette and pixels, tiling
+// the file exactly with no header and no terminator. Store order is upload
+// order, so a later block overwrites an earlier one.
+//
+// Each block is a Sony TIM data section with one difference: TIM's `bnum`
+// counts its own 12 byte header, this `size` does not. Adding 12 and
+// prefixing the 8 byte TIM/CLT/PXL header is the whole conversion.
+//
+// Palette blocks: width is always 16 (a 4bpp CLUT is 16 colours of 2 bytes),
+// height is the number of palettes, and the destination sits in the CLUT
+// strip at the bottom left of VRAM. Retail rows: 496 = body,
+// 503 = semi-transparent / shadow, 504 = tires.
+//
+// Pixel blocks: width counts 16 bit words, and at 4bpp one word holds 4
+// pixels, so the real width is width * 4. The player car owns VRAM
+// X 640-703; 704 and up belongs to the rival cars.
+//
+// Colours are BGR555 with the top bit acting as the semi-transparency (STP)
+// flag, so a translucent entry is the colour plus 0x8000.
+
+typedef struct {
+    ushort b : 5;
+    ushort g : 5;
+    ushort r : 5;
+    ushort stp : 1<comment="semi-transparency flag; colour + 0x8000">;
+} BGR555;
+
+typedef struct {
+    uint  size<comment="payload bytes == width * height * 2">;
+    ushort vramX;
+    ushort vramY;
+    ushort width<comment="in 16 bit words; 4bpp pixel width = width * 4">;
+    ushort height;
+
+    if (width == 16 && vramY >= 480) {
+        BGR555 palette[16 * height];
+    } else {
+        ubyte pixels[size]<comment="4bpp, two pixels per byte">;
+    }
+} VramBlock<optimize=false>;
+
+while (!FEof()) {
+    VramBlock block;
+}

@@ -1,11 +1,5 @@
-﻿using AuroraLib.Compression;
-using AuroraLib.Compression.Formats.Common;
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace C1CircuitTool
 {
@@ -26,36 +20,13 @@ namespace C1CircuitTool
 
             Directory.CreateDirectory(_destPath);
 
-            using (FileStream arcFileStream = new FileStream(_inputPath, FileMode.Open, FileAccess.Read))
+            var entries = SFile.Read(_inputPath);
+            for (int i = 0; i < entries.Count; i++)
             {
-                byte[] bytes = new byte[4];
-                arcFileStream.Read(bytes);
-                Int32 length = BitConverter.ToInt32(bytes);
-                Int32[] compressedSizes = new Int32[length];
-
-                for (int i = 0; i < length; i++)
-                {
-                    arcFileStream.Read(bytes);
-                    Int32 size = BitConverter.ToInt32(bytes);
-                    compressedSizes[i] = size;
-                }
-                for (int i = 0; i < length; i++)
-                {
-                    bytes = new byte[4];
-                    arcFileStream.Read(bytes, 0x00, bytes.Length);
-                    Int32 decompressSize = BitConverter.ToInt32(bytes);
-                    bytes = new byte[compressedSizes[i]-4];
-                    arcFileStream.Read(bytes, 0x00, bytes.Length);
-                    using (MemoryStream sourceStream = new MemoryStream(bytes))
-                    using (FileStream destStream = new FileStream(@$"{_destPath}\{i:D8}.BIN", FileMode.Create, FileAccess.Write))
-                    {
-                        LZSS.DecompressHeaderless(sourceStream, destStream, (uint)decompressSize, LZSS.Lzss0Properties);
-                    }
-                }
+                File.WriteAllBytes(Path.Combine(_destPath, $"{i:D8}.BIN"), entries[i]);
             }
 
-            Console.WriteLine("Done");
-
+            Console.WriteLine($"Done ({entries.Count} file(s))");
         }
     }
 }

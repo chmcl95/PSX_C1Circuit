@@ -1,4 +1,5 @@
 import math
+import os
 
 import bmesh
 import bpy
@@ -16,6 +17,11 @@ MSG_WARN_NODE_MULTI = "Node {0}: multiple objects assigned ({1}). " \
                       "Their geometry will be merged into a single node."
 MSG_WARN_NGON = "Object '{0}': {1} n-gon face(s) triangulated automatically."
 MSG_INFO_DONE = "RCARDT export finished: {0} node(s), {1} surface(s) total."
+MSG_WARN_TRAILING = "Scene's stored trailing bytes are not valid hex; skipped."
+
+# C1CircuitTool packs archive entries in file name order, and the game reads
+# entry 0 as the model, so this is the name the export has to carry.
+DEFAULT_FILENAME = "00000000.BIN"
 
 # Fixed +90 deg rotation around X, applied to both vertex positions and
 # node header positions. Confirmed empirically to make the in-game
@@ -64,8 +70,8 @@ def _build_surface(face_verts, mat_settings, uv_layer, options):
         surf.semi_transparent = mat_settings.semi_transparent
         surf.textured = mat_settings.textured
         surf.gouraud = mat_settings.gouraud
-        surf.clut_x = mat_settings.clut_x
-        surf.clut_y = mat_settings.clut_y
+        surf.render_type = mat_settings.render_type
+        surf.clut_x, surf.clut_y = mat_settings.resolve_clut()
         surf.texpage_x = mat_settings.texpage_x
         surf.texpage_y = mat_settings.texpage_y
         surf.semi_transparency = int(mat_settings.semi_transparency_mode)
@@ -73,8 +79,9 @@ def _build_surface(face_verts, mat_settings, uv_layer, options):
         surf.texture_disable = mat_settings.texture_disable
         surf.unk_bit9 = mat_settings.unk_bit9
         surf.unk_bit12 = mat_settings.unk_bit12
-        surf.unknown_tail = tuple(mat_settings.unknown_tail)
     # else: keep RcardtSurface defaults
+    # The surface's last 12 bytes hold its face normal, derived from the
+    # final vertex positions in RcardtSurface.pack(), so nothing is set here.
 
     return surf
 
@@ -173,6 +180,9 @@ def _build_node(node_index, objs, options, warnings):
     ref_obj = objs[0]
     settings = ref_obj.rcardt_object
     scale = options['position_scale']
+    # Preserved from an import so re-exporting an untouched file is byte
+    # identical. Stays 0 for models authored from scratch.
+    node.ptr_mdl = settings.ptr_mdl & 0xFFFFFFFF
 
     if settings.auto_transform:
         loc = AXIS_ROTATION_MATRIX @ ref_obj.location
@@ -206,6 +216,16 @@ def build_model(context, options):
     for i in range(NODE_COUNT):
         model.nodes[i] = _build_node(i, buckets[i], options, warnings)
 
+    # Bytes that followed the last surface of an imported file. Not part of
+    # the format, but the retail SW20 has 60 of them and dropping them would
+    # make an untouched import/export cycle change the file.
+    trailing = getattr(context.scene, "rcardt_trailing_bytes", "")
+    if trailing:
+        try:
+            model.trailing = bytes.fromhex(trailing)
+        except ValueError:
+            warnings.append(MSG_WARN_TRAILING)
+
     total_surfaces = sum(len(n.surfaces) for n in model.nodes)
     warnings.append(MSG_INFO_DONE.format(NODE_COUNT, total_surfaces))
     return model, warnings
@@ -220,8 +240,10 @@ class EXPORT_OT_RCARDT(bpy.types.Operator, ExportHelper):
     bl_description = "Export a PS1 RCARDT car model (00000000)"
     bl_options = {'REGISTER', 'UNDO'}
 
-    filename_ext = ""
-    filter_glob: StringProperty(default="*", options={'HIDDEN'})
+    # The archive stores files by index, so the model has to be named
+    # 00000000.BIN for C1CircuitTool to pack it back into the right slot.
+    filename_ext = ".BIN"
+    filter_glob: StringProperty(default="*.BIN;*", options={'HIDDEN'})
 
     use_selected_only: BoolProperty(
         name="Selected Objects Only",
@@ -267,6 +289,14 @@ class EXPORT_OT_RCARDT(bpy.types.Operator, ExportHelper):
                     "quads)",
         default=True,
     )
+
+    def invoke(self, context, event):
+        # ExportHelper would default to the .blend's name. The packer keys off
+        # the file name, so start from the one the packer expects instead.
+        directory = os.path.dirname(self.filepath) if self.filepath else ""
+        self.filepath = os.path.join(directory, DEFAULT_FILENAME)
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
 
     def draw(self, context):
         layout = self.layout

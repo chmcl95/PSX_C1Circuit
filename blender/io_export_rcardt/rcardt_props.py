@@ -1,5 +1,62 @@
 import bpy
 
+from . import rcardt_presets
+
+# Blender keeps no reference to the strings a dynamic EnumProperty callback
+# returns, so they have to stay alive here or the UI shows garbage.
+_clut_enum_items = []
+
+
+def preset_file_path(context=None):
+    """The clut_presets.json this scene is working against.
+
+    Importing a model points this at the car's own file; otherwise it is
+    empty and the built-in slots apply.
+    """
+    context = context or bpy.context
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return ""
+    return scene.rcardt_clut_preset_file
+
+
+def clut_preset_items(self, context):
+    """CLUT slot list, read from the scene's clut_presets.json."""
+    global _clut_enum_items
+    table = rcardt_presets.get_table(preset_file_path(context))
+    items = []
+    for preset in table.presets:
+        label = preset.name
+        if preset.description:
+            label = f"{preset.name} ({preset.description})"
+        items.append((
+            preset.name,
+            label,
+            f"Palette at VRAM ({preset.clut_x}, {preset.clut_y}); "
+            f"the model stores X={preset.model_clut_x} Y={preset.clut_y}",
+        ))
+    items.append((
+        rcardt_presets.MANUAL_ID,
+        rcardt_presets.MANUAL_LABEL,
+        "Ignore the slot list and write the raw CLUT X/Y fields below",
+    ))
+    _clut_enum_items = items
+    return _clut_enum_items
+
+
+class RCARDT_OT_ReloadPresets(bpy.types.Operator):
+    """Re-read clut_presets.json from disk"""
+
+    bl_idname = "rcardt.reload_clut_presets"
+    bl_label = "Reload CLUT Slots"
+
+    def execute(self, context):
+        rcardt_presets.invalidate_cache()
+        table = rcardt_presets.get_table(preset_file_path(context))
+        self.report({'INFO'},
+                    f"Reloaded {len(table.presets)} CLUT slot(s) from {table.source}")
+        return {'FINISHED'}
+
 
 # ---------------------------------------------------------------------------
 # Object-level settings: which of the 4 fixed RCARDT nodes this object is,
@@ -18,7 +75,8 @@ class RCARDT_ObjectSetting(bpy.types.PropertyGroup):
     node_index: bpy.props.IntProperty(
         name="Node Index",
         description="Which of the 4 fixed RCARDT nodes this object fills "
-                    "(0-3). Typically 0 = body, 1-3 = wheels/sub-parts",
+                    "(0 = body, 1/2 = front wheels, 3 = rear wheels). The "
+                    "game assumes this order and cannot take more nodes",
         default=0, min=0, max=3,
     )
 
@@ -42,6 +100,13 @@ class RCARDT_ObjectSetting(bpy.types.PropertyGroup):
         description="Node header rotation (game integer/angle units), used "
                     "only when Auto From Object Transform is disabled",
         default=(0, 0, 0), size=3,
+    )
+
+    ptr_mdl: bpy.props.IntProperty(
+        name="ptr_mdl",
+        description="Runtime-only pointer preserved from an imported file. "
+                    "The game overwrites it on load; new models write 0",
+        default=0,
     )
 
 
@@ -73,7 +138,9 @@ class RCARDT_MaterialSetting(bpy.types.PropertyGroup):
     )
     semi_transparent: bpy.props.BoolProperty(
         name="Semi Transparent",
-        description="Enable semi-transparency blending",
+        description="Enable semi-transparency blending. The palette also "
+                    "needs its STP bit (0x8000) set and the pixels must not "
+                    "be pure black, or nothing will be transparent",
         default=False,
     )
     gouraud: bpy.props.BoolProperty(
@@ -82,17 +149,32 @@ class RCARDT_MaterialSetting(bpy.types.PropertyGroup):
                     "only stores a single flat color per surface)",
         default=False,
     )
+    render_type: bpy.props.IntProperty(
+        name="Render Type",
+        description="1 = polygon, 2 = line, 3 = rectangle. RCARDT models "
+                    "only ever use 1",
+        default=1, min=0, max=7,
+    )
 
     # --- CLUT (Color Lookup Table location in VRAM) ---
+    clut_preset: bpy.props.EnumProperty(
+        name="CLUT Slot",
+        description="Named palette slot from clut_presets.json. The same "
+                    "slot drives the texture side in C1CircuitTool, so the "
+                    "two cannot drift apart. Choose Manual for raw values",
+        items=clut_preset_items,
+    )
     clut_x: bpy.props.IntProperty(
         name="CLUT X (raw)",
-        description="Raw CLUT X coordinate. Actual VRAM X = value * 16",
-        default=0, min=0, max=63,
+        description="Raw CLUT X coordinate. Actual VRAM X = value * 16. "
+                    "Only used when CLUT Slot is Manual",
+        default=8, min=0, max=63,
     )
     clut_y: bpy.props.IntProperty(
         name="CLUT Y",
-        description="CLUT Y coordinate in VRAM (0-511)",
-        default=0, min=0, max=511,
+        description="CLUT Y coordinate in VRAM (0-511). Only used when "
+                    "CLUT Slot is Manual",
+        default=496, min=0, max=511,
     )
 
     # --- Texpage ---
@@ -128,6 +210,9 @@ class RCARDT_MaterialSetting(bpy.types.PropertyGroup):
     )
     texture_disable: bpy.props.BoolProperty(
         name="Texture Disable",
+        description="Ignore the texture and use the flat color. This is the "
+                    "way to get more than one color onto semi-transparent "
+                    "faces",
         default=False,
     )
 
@@ -138,21 +223,30 @@ class RCARDT_MaterialSetting(bpy.types.PropertyGroup):
     unk_bit12: bpy.props.IntProperty(
         name="Unknown Texpage bit12-15", default=0, min=0, max=15,
     )
-    unknown_tail: bpy.props.IntVectorProperty(
-        name="Unknown Tail (0x2C)",
-        description="Raw passthrough for the 6 unknown shorts at the end "
-                    "of every Surface",
-        default=(0, 0, 0, 0, 0, 0), size=6, min=0, max=65535,
-    )
 
     # UI collapsible section flags
     show_command: bpy.props.BoolProperty(default=True)
-    show_clut: bpy.props.BoolProperty(default=False)
+    show_clut: bpy.props.BoolProperty(default=True)
     show_texpage: bpy.props.BoolProperty(default=False)
     show_advanced: bpy.props.BoolProperty(default=False)
 
+    # -- helpers ---------------------------------------------------------
+    def resolve_clut(self, context=None):
+        """(clut_x_raw, clut_y) as written into 00000000.BIN."""
+        if self.clut_preset == rcardt_presets.MANUAL_ID:
+            return (self.clut_x, self.clut_y)
+        table = rcardt_presets.get_table(preset_file_path(context))
+        resolved = table.resolve(self.clut_preset)
+        if resolved is None:
+            # The slot was renamed or removed since this material was set up.
+            # Fall back to the raw fields rather than silently writing the
+            # wrong palette.
+            return (self.clut_x, self.clut_y)
+        return resolved
+
 
 classes = (
+    RCARDT_OT_ReloadPresets,
     RCARDT_ObjectSetting,
     RCARDT_MaterialSetting,
 )
@@ -165,9 +259,27 @@ def register():
         type=RCARDT_ObjectSetting)
     bpy.types.Material.rcardt_material = bpy.props.PointerProperty(
         type=RCARDT_MaterialSetting)
+    bpy.types.Scene.rcardt_clut_preset_file = bpy.props.StringProperty(
+        name="CLUT Preset File",
+        description="clut_presets.json describing this car's palette layout, "
+                    "as written by 'C1CircuitTool rcardt-unpack'. Importing a "
+                    "model fills this in automatically. Leave empty to use "
+                    "the built-in slots",
+        subtype='FILE_PATH',
+        default="",
+    )
+    bpy.types.Scene.rcardt_trailing_bytes = bpy.props.StringProperty(
+        name="Trailing Bytes",
+        description="Hex of any bytes that followed the last surface in the "
+                    "imported file. The retail SW20 ships 60 zero bytes "
+                    "there; keeping them lets it export byte identically",
+        default="",
+    )
 
 
 def unregister():
+    del bpy.types.Scene.rcardt_trailing_bytes
+    del bpy.types.Scene.rcardt_clut_preset_file
     del bpy.types.Object.rcardt_object
     del bpy.types.Material.rcardt_material
     for cls in reversed(classes):

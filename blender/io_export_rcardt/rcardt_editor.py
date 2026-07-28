@@ -1,7 +1,35 @@
 import bpy
 
+from . import rcardt_presets
+from .rcardt_props import RCARDT_OT_ReloadPresets, preset_file_path
+
 MSG_HEX_2 = '{0}: 0x{1:02X}'
 MSG_HEX_4 = '{0}: 0x{1:04X}'
+
+
+# ---------------------------------------------------------------------------
+# Scene Editor: which car's CLUT slot list the whole scene works against
+# ---------------------------------------------------------------------------
+class SCENE_PT_RCARDT_Scene_Editor(bpy.types.Panel):
+    bl_idname = "SCENE_PT_RCARDT_Scene_Editor"
+    bl_label = "RCARDT CLUT Slots"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "scene"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(context.scene, "rcardt_clut_preset_file", text="Preset File")
+
+        table = rcardt_presets.get_table(preset_file_path(context))
+        box = layout.box()
+        box.label(text=f"Source: {table.source}")
+        box.label(text=f"{len(table.presets)} slot(s)")
+        col = box.column(align=True)
+        for preset in table.presets:
+            col.label(text=f"{preset.name}:  VRAM ({preset.clut_x}, "
+                           f"{preset.clut_y})  ->  model X={preset.model_clut_x}")
+        layout.operator(RCARDT_OT_ReloadPresets.bl_idname, icon='FILE_REFRESH')
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +70,10 @@ class OBJECT_PT_RCARDT_Object_Editor(bpy.types.Panel):
                            f"({obj.location.x:.2f}, {obj.location.y:.2f}, "
                            f"{obj.location.z:.2f})")
 
+        if settings.ptr_mdl:
+            col.label(text=f"ptr_mdl (imported): 0x{settings.ptr_mdl & 0xFFFFFFFF:08X}",
+                      icon='INFO')
+
 
 # ---------------------------------------------------------------------------
 # Material Editor: PS1 GPU polygon packet parameters
@@ -81,9 +113,25 @@ class OBJECT_PT_RCARDT_Material_Editor(bpy.types.Panel):
                     emboss=False)
         if settings.show_clut:
             box = layout.box()
-            box.prop(settings, "clut_x")
-            box.prop(settings, "clut_y")
-            box.label(text=f"VRAM: ({settings.clut_x * 16}, {settings.clut_y})")
+            box.prop(settings, "clut_preset")
+
+            manual = settings.clut_preset == rcardt_presets.MANUAL_ID
+            sub = box.column()
+            sub.enabled = manual
+            sub.prop(settings, "clut_x")
+            sub.prop(settings, "clut_y")
+
+            clut_x, clut_y = settings.resolve_clut(context)
+            info = box.column(align=True)
+            info.label(text=f"Model   (00000000): X={clut_x}  Y={clut_y}")
+            info.label(text=f"Texture (00000001): X={clut_x * 16}  Y={clut_y}")
+
+            if not manual:
+                table = rcardt_presets.get_table(preset_file_path(context))
+                if table.get(settings.clut_preset) is None:
+                    box.label(text=f"Slot '{settings.clut_preset}' is not in the "
+                                   f"preset file; using the raw X/Y above",
+                              icon='ERROR')
 
         header = layout.row()
         header.prop(settings, "show_texpage", text="Texture Page",
@@ -100,17 +148,20 @@ class OBJECT_PT_RCARDT_Material_Editor(bpy.types.Panel):
             box.prop(settings, "texture_disable")
 
         header = layout.row()
-        header.prop(settings, "show_advanced", text="Advanced / Unknown Fields",
+        header.prop(settings, "show_advanced", text="Advanced",
                     icon='TRIA_DOWN' if settings.show_advanced else 'TRIA_RIGHT',
                     emboss=False)
         if settings.show_advanced:
             box = layout.box()
+            box.prop(settings, "render_type")
             box.prop(settings, "unk_bit9")
             box.prop(settings, "unk_bit12")
-            box.prop(settings, "unknown_tail")
+            box.label(text="The surface's last 12 bytes are its face normal, "
+                           "computed per face on export.", icon='INFO')
 
 
 classes = (
+    SCENE_PT_RCARDT_Scene_Editor,
     OBJECT_PT_RCARDT_Object_Editor,
     OBJECT_PT_RCARDT_Material_Editor,
 )
